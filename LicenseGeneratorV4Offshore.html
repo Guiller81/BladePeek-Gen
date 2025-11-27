@@ -1,0 +1,231 @@
+<!doctype html>
+<html><head>
+  <meta charset="utf-8">
+  <title>Offline License Generator</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 24px auto; }
+    label { display:block; margin-top:12px; font-weight:600; }
+    input, select, textarea { width:100%; padding:8px; margin-top:6px; }
+    button { margin-top:16px; padding:10px 14px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    /* Fix checkbox alignment */
+    .checkbox-row { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-top: 12px; }
+    .checkbox-row input[type="checkbox"] { margin: 0; width: auto; }
+  </style>
+</head>
+<body>
+  <h1>Offline License Generator</h1>
+
+  <label>Role</label>
+  <select id="role">
+    <option value="rwe_list">RWE list</option>
+    <option value="only_manual">Only manual entry</option>
+    <option value="one_site_only">One site only</option>
+    <option value="admin">Admin</option>
+  </select>
+
+  <label>Region</label>
+  <select id="region">
+    <option value="rwece">RWECE</option>
+    <option value="opea">OPEA</option>
+    <option value="offshore">Offshore</option>
+  </select>
+
+  <!-- CSV upload to populate the Site list -->
+  <label>Upload sites CSV (first column; header row ignored)</label>
+  <input id="siteCsv" type="file" accept=".csv">
+
+  <label>Site (only required for One site only)</label>
+  <select id="site">
+    <option value="">-- Select site --</option>
+    
+    
+    
+  <option value="Amrumbank West">Amrumbank West</option><option value="Arkona-Becken Südost">Arkona-Becken Südost</option><option value="Galloper">Galloper</option><option value="Greater Gabbard">Greater Gabbard</option><option value="Gwynt y Môr">Gwynt y Môr</option><option value="Humber Gateway">Humber Gateway</option><option value="Karehamn">Karehamn</option><option value="Kaskasi">Kaskasi</option><option value="Nordsee Ost">Nordsee Ost</option><option value="North Hoyle">North Hoyle</option><option value="Rampion">Rampion</option><option value="Rhyl&nbsp;Flats">Rhyl&nbsp;Flats</option><option value="Robin Rigg">Robin Rigg</option><option value="Rodsand 2">Rodsand 2</option><option value="Scroby Sands">Scroby Sands</option><option value="Triton Knoll">Triton Knoll</option><option value="London Array">London Array</option><option value="Sofia">Sofia</option><option value="Thor">Thor</option><option value="HKW">HKW</option><option value="NSC">NSC</option><option value="Norfolk">Norfolk</option></select>
+
+  <label>Issued at (YYYY-MM-DD)</label>
+  <input id="issuedAt" placeholder="YYYY-MM-DD">
+
+  <label>Expiry date (YYYY-MM-DD)</label>
+  <input id="expiry" placeholder="2026-03-31">
+
+  <label>Device ID (from the app)</label>
+  <input id="deviceId" placeholder="paste deviceId shown by the app">
+
+  <label>Private key (Ed25519, base64)</label>
+  <textarea id="priv" rows="3" class="mono" placeholder="PRIVATE_KEY_BASE64"></textarea>
+
+  <!-- Fixed alignment -->
+  <label class="checkbox-row">
+    <input type="checkbox" id="hashDev" checked="">
+    <span>Store SHA-256 hash of deviceId (recommended)</span>
+  </label>
+
+  <button id="gen">Generate License</button>
+
+  <label>License payload (for review)</label>
+  <textarea id="payloadOut" rows="7" class="mono" readonly=""></textarea>
+
+  <label>LICENSE_TOKEN (paste this into the app)</label>
+  <textarea id="tokenOut" rows="4" class="mono" readonly=""></textarea>
+
+  <!-- NEW: Save HTML button -->
+  <button id="saveHtml">Save Form with Sites Hardcoded</button>
+
+  <script src="https://unpkg.com/tweetnacl/nacl-fast.min.js"></script>
+  <script>
+    // Pre-fill "Issued at" with today's date (YYYY-MM-DD)
+    (function prefillIssuedAt() {
+      const el = document.getElementById('issuedAt');
+      const today = new Date().toISOString().slice(0,10);
+      el.value = today;
+    })();
+
+    function b64urlFromBytes(bytes) {
+      return btoa(String.fromCharCode.apply(null, bytes))
+        .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    }
+    async function sha256Hex(str) {
+      const enc = new TextEncoder().encode(str);
+      const buf = await crypto.subtle.digest('SHA-256', enc);
+      const bytes = new Uint8Array(buf);
+      return Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join('');
+    }
+
+    // --- CSV parsing and dropdown replacement ---
+    function parseFirstColumnFromCsv(text) {
+      const lines = text.split(/\r?\n/);
+      const out = [];
+      for (let idx = 0; idx < lines.length; idx++) {
+        let line = lines[idx];
+        if (!line) continue;
+        line = line.trim();
+        if (line === '') continue;
+
+        let firstCol = '';
+        if (line[0] === '"') {
+          let j = 1, acc = '';
+          while (j < line.length) {
+            const ch = line[j];
+            if (ch === '"') {
+              if (line[j+1] === '"') { acc += '"'; j += 2; }
+              else { j++; break; }
+            } else { acc += ch; j++; }
+          }
+          firstCol = acc;
+        } else {
+          const commaIdx = line.indexOf(',');
+          firstCol = (commaIdx === -1) ? line : line.slice(0, commaIdx);
+        }
+        firstCol = firstCol.trim();
+        out.push(firstCol);
+      }
+      if (out.length > 0) out.shift(); // drop header
+
+      const seen = new Set(), cleaned = [];
+      for (const v of out) {
+        if (!v) continue;
+        if (!seen.has(v)) { seen.add(v); cleaned.push(v); }
+      }
+      return cleaned;
+    }
+
+    function replaceSiteOptions(siteNames) {
+      const sel = document.getElementById('site');
+      while (sel.options.length > 1) sel.remove(1);
+      for (const name of siteNames) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+      }
+    }
+
+    document.getElementById('siteCsv').addEventListener('change', (evt) => {
+      const file = evt.target.files && evt.target.files[0];
+      if (!file) return;
+      if (!/\.csv$/i.test(file.name)) {
+        alert('Please select a .csv file.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onerror = () => alert('Error reading CSV file.');
+      reader.onload = () => {
+        try {
+          const text = String(reader.result || '');
+          const sites = parseFirstColumnFromCsv(text);
+          if (!sites.length) {
+            alert('No sites found in the first column (after header).');
+            return;
+          }
+          replaceSiteOptions(sites);
+        } catch (e) {
+          alert('Error parsing CSV: ' + (e?.message || e));
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // --- Save current DOM as HTML file ---
+    document.getElementById('saveHtml').addEventListener('click', () => {
+      const serialized = '<!doctype html>\n' + document.documentElement.outerHTML;
+      const blob = new Blob([serialized], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Offline_License_Generator_updated.html';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // --- License generation logic (unchanged) ---
+    document.getElementById('gen').onclick = async () => {
+      try {
+        const role     = document.getElementById('role').value.trim();
+        const region   = document.getElementById('region').value.trim();
+        const site     = document.getElementById('site').value.trim();
+        const issuedAt = document.getElementById('issuedAt').value.trim();
+        const expiry   = document.getElementById('expiry').value.trim();
+        const deviceId = document.getElementById('deviceId').value.trim();
+        const privB64  = document.getElementById('priv').value.trim();
+        const useHash  = document.getElementById('hashDev').checked;
+
+        if (!role || !region || !issuedAt || !expiry || !deviceId || !privB64) {
+          alert('Please fill role, region, issued at, expiry, deviceId, and private key.');
+          return;
+        }
+
+        const today = new Date();
+        const expDate = new Date(expiry);
+        const maxDate = new Date(today);
+        maxDate.setFullYear(maxDate.getFullYear() + 1);
+        if (expDate > maxDate) {
+          alert('Expiry date cannot be more than 1 year from today.');
+          return;
+        }
+        if (expDate < new Date(issuedAt)) {
+          alert('Expiry date cannot be before Issued at date.');
+          return;
+        }
+
+        const devField = useHash ? await sha256Hex(deviceId) : deviceId;
+        const issued_at = issuedAt + 'T00:00:00Z';
+
+        const payload = { v:1, role, region, issued_at, expiry, dev: devField };
+        if (role === "one_site_only" && site) payload.site = site;
+
+        const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
+        const secretKey = Uint8Array.from(atob(privB64), c => c.charCodeAt(0));
+        const sig = nacl.sign.detached(payloadBytes, secretKey);
+        const token = b64urlFromBytes(payloadBytes) + '.' + b64urlFromBytes(sig);
+
+        document.getElementById('payloadOut').value = JSON.stringify(payload, null, 2);
+        document.getElementById('tokenOut').value   = token;
+      } catch (e) {
+        alert('Error generating license: ' + (e?.message || e));
+      }
+    };
+  </script>
+
+
+</body></html>

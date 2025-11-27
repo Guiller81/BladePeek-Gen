@@ -1,0 +1,148 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Offline License Verifier</title>
+  <style>
+    body { font:14px system-ui,sans-serif; max-width:800px; margin:24px auto; }
+    label { display:block; margin-top:12px; font-weight:600; }
+    input, textarea, button { width:100%; padding:8px; margin-top:6px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .ok { color:#0a7f2e; font-weight:700; }
+    .bad { color:#b00020; font-weight:700; }
+    .muted { color:#666; }
+  </style>
+</head>
+<body>
+  <h1>License Verifier</h1>
+
+  <label>PUBLIC_KEY_BASE64 (Ed25519)</label>
+  <textarea id="pub" rows="2" class="mono" placeholder="x4DSiAAXoX/FMYDyu6xUi3b7rQNadb8GRPAtbP20Bmg="></textarea>
+
+  <label>LICENSE_TOKEN</label>
+  <textarea id="token" rows="3" class="mono" placeholder="&lt;base64url payload&gt;.&lt;base64url signature&gt;"></textarea>
+
+  <details style="margin-top:8px;">
+    <summary>Optional: Device check</summary>
+    <label>Device ID (raw string from the app)</label>
+    <input id="deviceId" class="mono" placeholder="paste deviceId if you want to check binding"/>
+    <label><input type="checkbox" id="hashDev" checked> Payload uses SHA-256 hash of deviceId</label>
+  </details>
+
+  <button id="verify">Verify</button>
+
+  <div id="result" style="margin-top:16px"></div>
+
+  <script src="https://unpkg.com/tweetnacl/nacl-fast.min.js"></script>
+  <script>
+    // helpers
+    const b64uToBytes = (b64u) => {
+      const b64 = b64u.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(b64u.length/4)*4, '=');
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    };
+    const bytesToHex = (u8) => Array.from(u8).map(b=>b.toString(16).padStart(2,'0')).join('');
+    async function sha256Hex(str) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+      return bytesToHex(new Uint8Array(buf));
+    }
+    const escapeHTML = (s) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    document.getElementById('verify').onclick = async () => {
+      const out = document.getElementById('result');
+      out.innerHTML = '';
+
+      try {
+        const pubB64 = document.getElementById('pub').value.trim();
+        const token = document.getElementById('token').value.trim();
+        if (!pubB64 || !token) {
+          out.innerHTML = '<p class="bad">Please paste PUBLIC_KEY_BASE64 and LICENSE_TOKEN.</p>';
+          return;
+        }
+
+        const [p64u, s64u] = token.split('.');
+        if (!p64u || !s64u) throw new Error('Token format must be "<payload>.<signature>"');
+
+        const payloadBytes = b64uToBytes(p64u);
+        const sigBytes = b64uToBytes(s64u);
+        const pubBytes = Uint8Array.from(atob(pubB64), c => c.charCodeAt(0));
+
+        const sigOK = nacl.sign.detached.verify(payloadBytes, sigBytes, pubBytes);
+
+        let payload;
+        try { payload = JSON.parse(new TextDecoder().decode(payloadBytes)); }
+        catch { throw new Error('Payload is not valid JSON'); }
+
+        // Issued-at & activation window (informational)
+        let issuedHtml = '<span class="muted">Not present</span>';
+        let windowHtml = '<span class="muted">N/A</span>';
+        if (payload.issued_at) {
+          const issued = new Date(payload.issued_at);
+          if (isNaN(+issued)) {
+            issuedHtml = '<span class="bad">Invalid issued_at</span>';
+            windowHtml = '<span class="muted">Unknown</span>';
+          } else {
+            const today = new Date(); today.setHours(0,0,0,0);
+            const issuedDay = new Date(issued); issuedDay.setHours(0,0,0,0);
+            const daysSince = Math.max(0, Math.floor((today - issuedDay) / (1000*60*60*24)));
+            issuedHtml = `<span class="ok">${escapeHTML(payload.issued_at)}</span> • Days since issue: ${daysSince}`;
+            const deadline = new Date(issuedDay); deadline.setDate(deadline.getDate() + 7);
+            windowHtml = (today <= deadline)
+              ? '<span class="ok">Within 7-day activation window</span>'
+              : '<span class="bad">Past 7-day activation window</span>';
+          }
+        }
+
+        // Expiry check
+        let expiryStatus = '<span class="muted">No expiry found</span>';
+        let daysLeftTxt = '';
+        if (payload.expiry) {
+          const today = new Date(); today.setHours(0,0,0,0);
+          const exp = new Date(payload.expiry + 'T00:00:00');
+          const msLeft = exp - today;
+          if (msLeft < 0) {
+            expiryStatus = '<span class="bad">Expired</span>';
+          } else {
+            const daysLeft = Math.floor(msLeft / (1000*60*60*24));
+            expiryStatus = '<span class="ok">Valid (not expired)</span>';
+            daysLeftTxt = ` • Days left: ${daysLeft}`;
+          }
+        }
+
+        // Optional device check
+        let devCheckHtml = '<span class="muted">Skipped</span>';
+        const deviceId = document.getElementById('deviceId').value.trim();
+        const useHash = document.getElementById('hashDev').checked;
+        if (deviceId) {
+          const expected = payload.dev;
+          const computed = useHash ? await sha256Hex(deviceId) : deviceId;
+          devCheckHtml = (expected && computed && expected === computed)
+            ? '<span class="ok">Match</span>'
+            : '<span class="bad">Mismatch</span>';
+        }
+
+        // Role/region/site display
+        let roleInfo = payload.role ? `<span class="ok">${escapeHTML(payload.role)}</span>` : '<span class="muted">Not specified</span>';
+        let regionInfo = payload.region ? `<span class="ok">${escapeHTML(payload.region)}</span>` : '<span class="muted">Not specified</span>';
+        let siteInfo = payload.site ? `<span class="ok">${escapeHTML(payload.site)}</span>` : '<span class="muted">N/A</span>';
+
+        out.innerHTML =
+          `<p>Signature: ${sigOK ? '<span class="ok">VALID</span>' : '<span class="bad">INVALID</span>'}</p>` +
+          `<p>Issued at: ${issuedHtml}</p>` +
+          `<p>Activation window: ${windowHtml}</p>` +
+          `<p>Expiry: ${expiryStatus}${daysLeftTxt}</p>` +
+          `<p>Device binding: ${devCheckHtml}</p>` +
+          `<p>Role: ${roleInfo}</p>` +
+          `<p>Region: ${regionInfo}</p>` +
+          `<p>Site (if one_site_only): ${siteInfo}</p>` +
+          `<p>Full payload:</p><pre class="mono">` + escapeHTML(JSON.stringify(payload, null, 2)) + `</pre>`;
+
+      } catch (e) {
+        out.innerHTML = `<p class="bad">Error: ${escapeHTML(e.message || String(e))}</p>`;
+      }
+    };
+  </script>
+</body>
+</html>
