@@ -1,5 +1,6 @@
 <!doctype html>
-<html><head>
+<html>
+<head>
   <meta charset="utf-8">
   <title>Offline License Generator</title>
   <style>
@@ -38,10 +39,8 @@
   <label>Site (only required for One site only)</label>
   <select id="site">
     <option value="">-- Select site --</option>
-    
-    
-    
-  <option value="Amrumbank West">Amrumbank West</option><option value="Arkona-Becken Südost">Arkona-Becken Südost</option><option value="Galloper">Galloper</option><option value="Greater Gabbard">Greater Gabbard</option><option value="Gwynt y Môr">Gwynt y Môr</option><option value="Humber Gateway">Humber Gateway</option><option value="Karehamn">Karehamn</option><option value="Kaskasi">Kaskasi</option><option value="Nordsee Ost">Nordsee Ost</option><option value="North Hoyle">North Hoyle</option><option value="Rampion">Rampion</option><option value="Rhyl&nbsp;Flats">Rhyl&nbsp;Flats</option><option value="Robin Rigg">Robin Rigg</option><option value="Rodsand 2">Rodsand 2</option><option value="Scroby Sands">Scroby Sands</option><option value="Triton Knoll">Triton Knoll</option><option value="London Array">London Array</option><option value="Sofia">Sofia</option><option value="Thor">Thor</option><option value="HKW">HKW</option><option value="NSC">NSC</option><option value="Norfolk">Norfolk</option></select>
+    <option value="Anacacho">Anacacho</option><option value="Aurora">Aurora</option><option value="Baron Winds">Baron Winds</option><option value="Baron Winds II">Baron Winds II</option><option value="Big Timber">Big Timber</option><option value="Blackjack Creek">Blackjack Creek</option><option value="Boiling Springs">Boiling Springs</option><option value="Broken Bow II">Broken Bow II</option><option value="Bruennings Breeze">Bruennings Breeze</option><option value="Brule">Brule</option><option value="Camp Creek">Camp Creek</option><option value="Campbell County">Campbell County</option><option value="Cassadaga">Cassadaga</option><option value="Centerville">Centerville</option><option value="Champion">Champion</option><option value="Colbecks Corner">Colbecks Corner</option><option value="Coram">Coram</option><option value="Cranell">Cranell</option><option value="El Algodon Alto">El Algodon Alto</option><option value="Forest Creek">Forest Creek</option><option value="Future Generation">Future Generation</option><option value="Grandview">Grandview</option><option value="Honey Mesquite">Honey Mesquite</option><option value="Inadale">Inadale</option><option value="Lane City">Lane City</option><option value="Magic Valley">Magic Valley</option><option value="Manchester">Manchester</option><option value="Mason City">Mason City</option><option value="Montgomery Ranch">Montgomery Ranch</option><option value="Munnsville">Munnsville</option><option value="Oak Tree">Oak Tree</option><option value="Panther Creek I &amp; II">Panther Creek I &amp; II</option><option value="Panther Creek III">Panther Creek III</option><option value="Papalote Creek I">Papalote Creek I</option><option value="Papalote Creek II">Papalote Creek II</option><option value="Peyton Creek I">Peyton Creek I</option><option value="Peyton Creek II">Peyton Creek II</option><option value="Pioneer Trail">Pioneer Trail</option><option value="Prairie Creek I">Prairie Creek I</option><option value="Pyron">Pyron</option><option value="Radfords Run">Radfords Run</option><option value="Raymond East">Raymond East</option><option value="Raymond West">Raymond West</option><option value="Red Lake Falls">Red Lake Falls</option><option value="Roscoe">Roscoe</option><option value="RP Wind">RP Wind</option><option value="Sand Bluff">Sand Bluff</option><option value="Scioto Ridge">Scioto Ridge</option><option value="Settlers Trail">Settlers Trail</option><option value="Stella">Stella</option><option value="Stony Creek">Stony Creek</option><option value="Valley View">Valley View</option><option value="Wildcat">Wildcat</option><option value="Wind Partners 5045">Wind Partners 5045</option><option value="Woodstock Hills">Woodstock Hills</option><option value="Yellow Cat">Yellow Cat</option>
+  </select>
 
   <label>Issued at (YYYY-MM-DD)</label>
   <input id="issuedAt" placeholder="YYYY-MM-DD">
@@ -178,7 +177,7 @@
       URL.revokeObjectURL(url);
     });
 
-    // --- License generation logic (unchanged) ---
+    // --- License generation logic (with private key auto-clear) ---
     document.getElementById('gen').onclick = async () => {
       try {
         const role     = document.getElementById('role').value.trim();
@@ -187,7 +186,10 @@
         const issuedAt = document.getElementById('issuedAt').value.trim();
         const expiry   = document.getElementById('expiry').value.trim();
         const deviceId = document.getElementById('deviceId').value.trim();
-        const privB64  = document.getElementById('priv').value.trim();
+
+        const privEl   = document.getElementById('priv');
+        const privB64  = privEl.value.trim();
+
         const useHash  = document.getElementById('hashDev').checked;
 
         if (!role || !region || !issuedAt || !expiry || !deviceId || !privB64) {
@@ -221,11 +223,13 @@
 
         document.getElementById('payloadOut').value = JSON.stringify(payload, null, 2);
         document.getElementById('tokenOut').value   = token;
+
+        // Clear the private key field so it doesn't remain visible
+        privEl.value = '';
       } catch (e) {
         alert('Error generating license: ' + (e?.message || e));
       }
     };
   </script>
-
-
-</body></html>
+</body>
+</html>
